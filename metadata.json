@@ -1,0 +1,5 @@
+{
+  "name": "Wear OS Music Player",
+  "description": "A minimalist music player designed for Wear OS circular displays, featuring large touch controls and real-time playback feedback.",
+  "requestFramePermissions": []
+}

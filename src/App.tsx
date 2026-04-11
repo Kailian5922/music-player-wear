@@ -18,7 +18,11 @@ import {
   Heart,
   Clock,
   Smartphone,
-  Watch
+  Watch,
+  Settings,
+  Search,
+  Type,
+  RefreshCw
 } from 'lucide-react';
 import { motion, AnimatePresence, useMotionValue, animate, useAnimationFrame, useTransform } from 'motion/react';
 
@@ -127,7 +131,8 @@ const getDominantColor = (imageUrl: string): Promise<string> => {
 };
 
 type PlaybackMode = 'loop' | 'shuffle' | 'repeat-one';
-type ViewState = 'lyrics' | 'player' | 'info' | 'playlist' | 'settings';
+type ViewState = 'lyrics' | 'player' | 'info' | 'playlist' | 'settings' | 'more-settings';
+type FontSize = 'sm' | 'base' | 'lg';
 
 // --- Sub-components for performance optimization ---
 
@@ -238,8 +243,14 @@ export default function App() {
   const [volume, setVolume] = useState(60);
   const [showVolume, setShowVolume] = useState(false);
   const [playbackMode, setPlaybackMode] = useState<PlaybackMode>('loop');
-  const [isLiked, setIsLiked] = useState(false);
+  const [likedTrackIds, setLikedTrackIds] = useState<string[]>([]);
+  const [playlistFilter, setPlaylistFilter] = useState<'all' | 'favorites'>('all');
   const [sleepTimer, setSleepTimer] = useState<number | null>(null);
+  const [fontSize, setFontSize] = useState<FontSize>('base');
+  const [isScanning, setIsScanning] = useState(false);
+  const [isLyricsKaraoke, setIsLyricsKaraoke] = useState(true);
+  const [hasPermission, setHasPermission] = useState(false);
+  const [isFirstLaunch, setIsFirstLaunch] = useState(true);
   const [activeDevice, setActiveDevice] = useState<'watch' | 'phone'>('watch');
   const [dragLock, setDragLock] = useState<null | 'x' | 'y'>(null);
   const rotationMV = useMotionValue(0);
@@ -274,6 +285,13 @@ export default function App() {
   useEffect(() => {
     getDominantColor(currentTrack.cover).then(setAccentColor);
   }, [currentTrack.cover]);
+
+  useEffect(() => {
+    // Initial launch check
+    if (isFirstLaunch) {
+      // We could trigger something here if needed
+    }
+  }, [isFirstLaunch]);
 
   useEffect(() => {
     if (isPlaying) {
@@ -322,6 +340,15 @@ export default function App() {
   };
 
   const progress = (currentTime / currentTrack.duration) * 100;
+  const isLiked = likedTrackIds.includes(currentTrack.id);
+
+  const toggleLike = () => {
+    setLikedTrackIds(prev => 
+      prev.includes(currentTrack.id) 
+        ? prev.filter(id => id !== currentTrack.id) 
+        : [...prev, currentTrack.id]
+    );
+  };
 
   // Google Petal Shape (Material You Scalloped)
   // Subtler 12-petal design to match the user's image
@@ -367,25 +394,36 @@ export default function App() {
     // Star Navigation Logic: Only allow transitions between Player and its 4 neighbors
     if (view === 'player') {
       if (Math.abs(offsetX) > Math.abs(offsetY)) {
-        if (offsetX > threshold) setView('settings'); // Swipe Right -> Move Left (Settings)
-        else if (offsetX < -threshold) setView('playlist'); // Swipe Left -> Move Right (Playlist)
+        if (offsetX > threshold) setView('playlist'); // Swipe Right -> Move Left (Playlist)
+        else if (offsetX < -threshold) setView('settings'); // Swipe Left -> Move Right (Settings)
       } else {
         if (offsetY > threshold) setView('lyrics');
         else if (offsetY < -threshold) setView('info');
       }
+    } else if (view === 'playlist') {
+      // Swipe left to go back to player
+      if (offsetX < -threshold) setView('player');
+      else if (Math.abs(offsetX) < 10 && Math.abs(offsetY) < 10) {
+        // This was likely a tap, let the button handle it
+      }
+    } else if (view === 'settings') {
+      if (offsetX > threshold) setView('player');
+      else if (offsetY > threshold) setView('more-settings');
+    } else if (view === 'more-settings') {
+      if (offsetY < -threshold) setView('settings');
+      else if (offsetX > threshold) setView('player');
     } else {
       // If in a sub-view, only allow swiping back to the center (Player)
-      if (view === 'playlist' && offsetX > threshold) setView('player'); // Playlist is on right, swipe right to go back
-      else if (view === 'settings' && offsetX < -threshold) setView('player'); // Settings is on left, swipe left to go back
-      else if (view === 'lyrics' && offsetY < -threshold) setView('player');
+      if (view === 'lyrics' && offsetY < -threshold) setView('player');
       else if (view === 'info' && offsetY > threshold) setView('player');
     }
   };
 
   const getPagerPos = () => {
     switch (view) {
-      case 'settings': return { x: 0, y: -320 };
-      case 'playlist': return { x: -640, y: -320 };
+      case 'playlist': return { x: 0, y: -320 };
+      case 'settings': return { x: -640, y: -320 };
+      case 'more-settings': return { x: -640, y: 0 };
       case 'lyrics': return { x: -320, y: 0 };
       case 'player': return { x: -320, y: -320 };
       case 'info': return { x: -320, y: -640 };
@@ -403,8 +441,9 @@ export default function App() {
     const center = { left: -320, right: -320, top: -320, bottom: -320 };
     switch (view) {
       case 'player': return { left: -640, right: 0, top: -640, bottom: 0 };
-      case 'settings': return { left: -320, right: 0, top: -320, bottom: -320 };
-      case 'playlist': return { left: -640, right: -320, top: -320, bottom: -320 };
+      case 'playlist': return { left: -320, right: 0, top: -320, bottom: -320 };
+      case 'settings': return { left: -640, right: -320, top: -320, bottom: 0 };
+      case 'more-settings': return { left: -640, right: -320, top: 0, bottom: -320 };
       case 'lyrics': return { left: -320, right: -320, top: -320, bottom: 0 };
       case 'info': return { left: -320, right: -320, top: -640, bottom: -320 };
       default: return center;
@@ -442,68 +481,61 @@ export default function App() {
           style={{ x, y }}
           transition={{ type: 'spring', damping: 35, stiffness: 250 }}
         >
-          {/* COLUMN 0: Quick Settings */}
+          {/* COLUMN 0: Playlist */}
           <div className="w-[320px] h-[960px] flex flex-col">
             <div className="w-full h-[320px]" /> {/* Empty Top */}
-            <div className="w-full h-[320px] flex flex-col items-center py-10 px-8 relative">
-              <h3 className="text-white/60 text-[10px] font-bold mb-6 uppercase tracking-[0.3em]">快捷设置</h3>
-              <div className="grid grid-cols-2 gap-3 w-full">
+            <div className="w-full h-[320px] flex flex-col items-center relative overflow-hidden">
+              {/* Floating Filter Toggle - Curved/Rounded bar at the very top */}
+              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-30">
                 <button 
-                  onClick={cyclePlaybackMode}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
+                  onClick={() => setPlaylistFilter(prev => prev === 'all' ? 'favorites' : 'all')}
+                  className="bg-white/10 backdrop-blur-md border border-white/10 px-4 py-1.5 rounded-full flex items-center gap-2 active:scale-95 transition-all shadow-lg"
                 >
-                  <div className="text-white/60">
-                    {playbackMode === 'loop' && <Repeat size={18} />}
-                    {playbackMode === 'shuffle' && <Shuffle size={18} />}
-                    {playbackMode === 'repeat-one' && <Repeat1 size={18} />}
-                  </div>
-                  <span className="text-[9px] text-white font-bold uppercase tracking-wider text-center">
-                    {playbackMode === 'loop' ? '列表循环' : playbackMode === 'shuffle' ? '随机播放' : '单曲循环'}
+                  <div className={`w-1.5 h-1.5 rounded-full ${playlistFilter === 'favorites' ? 'bg-red-500 animate-pulse' : 'bg-white/40'}`} />
+                  <span className="text-[9px] text-white font-bold uppercase tracking-widest">
+                    {playlistFilter === 'all' ? '全部歌曲' : '我的收藏'}
                   </span>
-                </button>
-                <button 
-                  onClick={() => setShowVolume(true)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
-                >
-                  <Volume2 size={18} className="text-white/60" />
-                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">音量调节</span>
-                </button>
-                
-                <button 
-                  onClick={() => setSleepTimer(sleepTimer ? null : 30)}
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className={`p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform ${sleepTimer ? 'bg-white/20' : 'bg-white/5'}`}
-                >
-                  <Clock size={18} className={sleepTimer ? 'text-white' : 'text-white/60'} />
-                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">
-                    {sleepTimer ? `${sleepTimer}m` : '睡眠定时'}
-                  </span>
-                </button>
-
-                <button 
-                  onClick={() => setActiveDevice(activeDevice === 'watch' ? 'phone' : 'watch')}
-                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
-                >
-                  {activeDevice === 'watch' ? <Watch size={18} className="text-white/60" /> : <Smartphone size={18} className="text-white/60" />}
-                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">
-                    {activeDevice === 'watch' ? '手表播放' : '手机播放'}
-                  </span>
-                </button>
-
-                <button 
-                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform col-span-2"
-                >
-                  <div className="flex gap-1">
-                    {[1, 2, 3].map(i => <div key={i} className="w-1.5 h-1.5 rounded-full bg-emerald-400" />)}
-                  </div>
-                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">Hi-Res 输出模式</span>
                 </button>
               </div>
-              <button onClick={() => setView('player')} onPointerDown={(e) => e.stopPropagation()} className="mt-auto text-white/20 hover:text-white/50 transition-colors">
-                <ChevronRight size={24} />
-              </button>
+              
+              <div className="w-full h-full overflow-y-auto no-scrollbar mask-fade-edges px-0 scroll-smooth" style={{ touchAction: 'pan-y' }}>
+                <div className="flex flex-col items-center pt-24 pb-32">
+                  {MOCK_PLAYLIST
+                    .map((track, originalIdx) => ({ ...track, originalIdx }))
+                    .filter(t => playlistFilter === 'all' || likedTrackIds.includes(t.id))
+                    .map((track, idx) => {
+                      // Curved layout logic: scale and width based on position
+                      return (
+                        <motion.button 
+                          key={track.id}
+                          onClick={() => { setCurrentTrackIndex(track.originalIdx); setView('player'); }}
+                          whileInView={{ 
+                            scale: [0.8, 1, 0.8],
+                            opacity: [0.3, 1, 0.3],
+                            width: ["65%", "92%", "65%"]
+                          }}
+                          viewport={{ margin: "-80px 0px -80px 0px" }}
+                          className={`flex items-center gap-3 p-3.5 rounded-[24px] transition-colors mb-2 mx-auto ${track.originalIdx === currentTrackIndex ? 'bg-white/15' : 'bg-white/5'}`}
+                        >
+                          <img src={track.cover} className="w-10 h-10 rounded-xl object-cover shrink-0" referrerPolicy="no-referrer" />
+                          <div className="text-left flex-1 min-w-0">
+                            <p className={`text-xs font-bold truncate ${track.originalIdx === currentTrackIndex ? 'text-white' : 'text-white/60'}`}>{track.title}</p>
+                            <p className="text-[10px] text-white/30 truncate">{track.artist}</p>
+                          </div>
+                          {likedTrackIds.includes(track.id) && (
+                            <Heart size={10} className="text-red-500 shrink-0" fill="currentColor" />
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                  {playlistFilter === 'favorites' && likedTrackIds.length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-10 opacity-30">
+                      <Heart size={24} className="mb-2" />
+                      <p className="text-[10px]">暂无收藏歌曲</p>
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="w-full h-[320px]" /> {/* Empty Bottom */}
           </div>
@@ -518,19 +550,33 @@ export default function App() {
                   {currentTrack.lyrics.map((line, idx) => {
                     const isActive = currentTime >= line.time && (idx === currentTrack.lyrics.length - 1 || currentTime < currentTrack.lyrics[idx + 1].time);
                     return (
-                      <motion.p
-                        key={idx}
-                        onTap={() => handleSeek(line.time)}
-                        onPointerDown={(e) => e.stopPropagation()}
-                        animate={{ 
-                          color: isActive ? accentColor : "rgba(255,255,255,0.3)",
-                          scale: isActive ? 1.1 : 1,
-                          fontWeight: isActive ? 700 : 400
-                        }}
-                        className="text-sm cursor-pointer transition-all text-center leading-relaxed"
-                      >
-                        {line.text}
-                      </motion.p>
+                        <motion.p
+                          key={idx}
+                          onTap={() => handleSeek(line.time)}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          animate={{ 
+                            color: isActive ? accentColor : "rgba(255,255,255,0.3)",
+                            scale: isActive ? 1.05 : 1,
+                            fontWeight: isActive ? 700 : 400,
+                            filter: isActive ? "blur(0px)" : "blur(0.5px)"
+                          }}
+                          className="text-sm cursor-pointer transition-all text-center leading-relaxed relative"
+                        >
+                          {isLyricsKaraoke && isActive ? (
+                            <span className="relative inline-block">
+                              <span className="opacity-30">{line.text}</span>
+                              <motion.span 
+                                initial={{ width: 0 }}
+                                animate={{ width: "100%" }}
+                                transition={{ duration: 2, ease: "linear" }}
+                                className="absolute left-0 top-0 overflow-hidden whitespace-nowrap"
+                                style={{ color: accentColor }}
+                              >
+                                {line.text}
+                              </motion.span>
+                            </span>
+                          ) : line.text}
+                        </motion.p>
                     );
                   })}
                 </div>
@@ -551,7 +597,7 @@ export default function App() {
                 <span className="text-white/60 text-xs font-medium mb-1">
                   {time.getHours()}:{String(time.getMinutes()).padStart(2, '0')}
                 </span>
-                <h2 className="text-white text-base font-bold truncate max-w-[220px] leading-tight">
+                <h2 className={`text-white font-bold truncate max-w-[220px] leading-tight text-${fontSize}`}>
                   {currentTrack.title}
                 </h2>
                 <p className="text-white/40 text-[11px] font-medium truncate max-w-[180px] mt-0.5">
@@ -591,7 +637,7 @@ export default function App() {
                 <button onClick={() => setShowVolume(true)} onPointerDown={(e) => e.stopPropagation()} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white/70 active:scale-90">
                   <Volume2 size={18} />
                 </button>
-                <button onClick={() => setIsLiked(!isLiked)} onPointerDown={(e) => e.stopPropagation()} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:scale-90">
+                <button onClick={toggleLike} onPointerDown={(e) => e.stopPropagation()} className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center active:scale-90">
                   <motion.div animate={{ scale: isLiked ? [1, 1.3, 1] : 1, color: isLiked ? '#ef4444' : 'rgba(255,255,255,0.7)' }}>
                     <Heart size={18} fill={isLiked ? "currentColor" : "none"} />
                   </motion.div>
@@ -632,44 +678,112 @@ export default function App() {
             </div>
           </div>
 
-          {/* COLUMN 2: Playlist */}
+          {/* COLUMN 2: Quick Settings & More Settings */}
           <div className="w-[320px] h-[960px] flex flex-col">
-            <div className="w-full h-[320px]" /> {/* Empty Top */}
-            <div className="w-full h-[320px] flex flex-col items-center py-10 px-6 relative">
-              <h3 className="text-white/60 text-[10px] font-bold mb-4 uppercase tracking-[0.3em]">播放列表</h3>
-              <div className="w-full flex-1 overflow-y-auto no-scrollbar mask-fade-edges">
-                <div className="flex flex-col gap-2">
-                  {MOCK_PLAYLIST.map((track, idx) => (
-                    <button 
-                      key={track.id}
-                      onClick={() => { setCurrentTrackIndex(idx); setView('player'); }}
-                      onPointerDown={(e) => e.stopPropagation()}
-                      className={`flex items-center gap-3 p-2 rounded-xl transition-colors ${idx === currentTrackIndex ? 'bg-white/10' : 'hover:bg-white/5'}`}
-                    >
-                      <img src={track.cover} className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
-                      <div className="text-left flex-1 min-w-0">
-                        <p className={`text-xs font-bold truncate ${idx === currentTrackIndex ? 'text-white' : 'text-white/60'}`}>{track.title}</p>
-                        <p className="text-[10px] text-white/30 truncate">{track.artist}</p>
-                      </div>
-                      {idx === currentTrackIndex && isPlaying && (
-                        <div className="flex gap-0.5 items-end h-3">
-                          {[1, 2, 3].map(i => (
-                            <motion.div 
-                              key={i}
-                              animate={{ height: [4, 12, 4] }}
-                              transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.1 }}
-                              className="w-0.5 bg-white"
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </button>
-                  ))}
+            {/* VIEW: More Settings (Top) */}
+            <div className="w-full h-[320px] flex flex-col items-center py-12 px-8 relative overflow-hidden">
+              <h3 className="text-white/60 text-[10px] font-bold mb-6 uppercase tracking-[0.3em]">更多设置</h3>
+              <div className="flex flex-col gap-3 w-full overflow-y-auto no-scrollbar" style={{ touchAction: 'pan-y' }}>
+                <button 
+                  onClick={() => {
+                    setIsScanning(true);
+                    setTimeout(() => setIsScanning(false), 2000);
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="bg-white/5 p-4 rounded-3xl flex items-center justify-between active:scale-95 transition-transform shrink-0"
+                >
+                  <div className="flex items-center gap-3">
+                    <Search size={18} className="text-white/60" />
+                    <span className="text-[11px] text-white font-bold uppercase tracking-wider">手动扫描音乐</span>
+                  </div>
+                  {isScanning && <RefreshCw size={14} className="text-emerald-400 animate-spin" />}
+                </button>
+
+                <button 
+                  onClick={() => setIsLyricsKaraoke(!isLyricsKaraoke)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={`p-4 rounded-3xl flex items-center justify-between active:scale-95 transition-transform shrink-0 ${isLyricsKaraoke ? 'bg-white/20' : 'bg-white/5'}`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Music size={18} className={isLyricsKaraoke ? 'text-white' : 'text-white/60'} />
+                    <span className="text-[11px] text-white font-bold uppercase tracking-wider">逐字歌词动画</span>
+                  </div>
+                  <div className={`w-8 h-4 rounded-full relative transition-colors ${isLyricsKaraoke ? 'bg-emerald-500' : 'bg-white/20'}`}>
+                    <motion.div 
+                      animate={{ x: isLyricsKaraoke ? 16 : 2 }}
+                      className="absolute top-1 w-2 h-2 rounded-full bg-white"
+                    />
+                  </div>
+                </button>
+
+                <div className="bg-white/5 p-4 rounded-3xl flex flex-col gap-3 shrink-0">
+                  <div className="flex items-center gap-3">
+                    <Type size={18} className="text-white/60" />
+                    <span className="text-[11px] text-white font-bold uppercase tracking-wider">字体大小</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    {(['sm', 'base', 'lg'] as FontSize[]).map((size) => (
+                      <button
+                        key={size}
+                        onClick={() => setFontSize(size)}
+                        onPointerDown={(e) => e.stopPropagation()}
+                        className={`flex-1 py-2 rounded-xl text-[10px] font-bold uppercase transition-colors ${fontSize === size ? 'bg-white/20 text-white' : 'bg-white/5 text-white/40'}`}
+                      >
+                        {size === 'sm' ? '小' : size === 'base' ? '中' : '大'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <button onClick={() => setView('player')} onPointerDown={(e) => e.stopPropagation()} className="mt-auto text-white/20 hover:text-white/50 transition-colors">
-                <ChevronLeft size={24} />
-              </button>
+            </div>
+
+            {/* VIEW: Quick Settings (Center) */}
+            <div className="w-full h-[320px] flex flex-col items-center py-12 px-8 relative">
+              <h3 className="text-white/60 text-[10px] font-bold mb-6 uppercase tracking-[0.3em]">快捷设置</h3>
+              <div className="grid grid-cols-2 gap-3 w-full">
+                <button 
+                  onClick={cyclePlaybackMode}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
+                >
+                  <div className="text-white/60">
+                    {playbackMode === 'loop' && <Repeat size={18} />}
+                    {playbackMode === 'shuffle' && <Shuffle size={18} />}
+                    {playbackMode === 'repeat-one' && <Repeat1 size={18} />}
+                  </div>
+                  <span className="text-[9px] text-white font-bold uppercase tracking-wider text-center">
+                    {playbackMode === 'loop' ? '列表循环' : playbackMode === 'shuffle' ? '随机播放' : '单曲循环'}
+                  </span>
+                </button>
+                <button 
+                  onClick={() => setShowVolume(true)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
+                >
+                  <Volume2 size={18} className="text-white/60" />
+                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">音量调节</span>
+                </button>
+                
+                <button 
+                  onClick={() => setSleepTimer(sleepTimer ? null : 30)}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className={`p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform ${sleepTimer ? 'bg-white/20' : 'bg-white/5'}`}
+                >
+                  <Clock size={18} className={sleepTimer ? 'text-white' : 'text-white/60'} />
+                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">
+                    {sleepTimer ? `${sleepTimer}m` : '睡眠定时'}
+                  </span>
+                </button>
+
+                <button 
+                  onClick={() => setView('more-settings')}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="bg-white/5 p-3 rounded-3xl flex flex-col items-center gap-1 active:scale-95 transition-transform"
+                >
+                  <Settings size={18} className="text-white/60" />
+                  <span className="text-[9px] text-white font-bold uppercase tracking-wider">更多设置</span>
+                </button>
+              </div>
             </div>
             <div className="w-full h-[320px]" /> {/* Empty Bottom */}
           </div>
@@ -712,6 +826,36 @@ export default function App() {
 
         {/* Bezel Accents */}
         <div className="absolute inset-0 pointer-events-none border-[1px] border-white/5 rounded-full z-30" />
+
+        {/* Permission Overlay */}
+        <AnimatePresence>
+          {!hasPermission && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 z-[100] bg-black flex flex-col items-center justify-center p-8 text-center"
+            >
+              <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-6">
+                <Search size={32} className="text-white/60" />
+              </div>
+              <h3 className="text-white text-sm font-bold mb-2">需要存储权限</h3>
+              <p className="text-white/40 text-[10px] leading-relaxed mb-8">为了扫描并播放你手表中的本地音乐，我们需要访问存储空间。</p>
+              <button 
+                onClick={() => {
+                  setIsScanning(true);
+                  setTimeout(() => {
+                    setIsScanning(false);
+                    setHasPermission(true);
+                  }, 2000);
+                }}
+                className="w-full py-3 bg-white text-black rounded-full text-xs font-bold active:scale-95 transition-transform flex items-center justify-center gap-2"
+              >
+                {isScanning ? <RefreshCw size={14} className="animate-spin" /> : '授权并扫描音乐'}
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Desktop Legend */}
